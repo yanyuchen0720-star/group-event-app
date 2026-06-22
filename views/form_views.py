@@ -16,15 +16,23 @@ def toggle_date(date_str):
 def render_fill_form(REDIRECT_URI):
     current_code = st.session_state.current_event_code
     events_df = db.load_events()
+    
+    # 🌟 新增終極防呆：確保活動代碼真的存在，避免舊網址導致程式白屏死機
+    if current_code not in events_df["活動代碼"].values:
+        st.error("❌ 找不到這個揪團！可能活動已經被主揪刪除了。")
+        if st.button("🏠 回首頁"):
+            st.session_state.current_event_code = ""
+            st.session_state.page = "home"
+            st.rerun()
+        return
+        
     event_info = events_df[events_df["活動代碼"] == current_code].iloc[0]
     
-    # 🌟 真・修復：讀取我們剛才在 app.py 建立的強制重整旗標
     force_reload = st.session_state.get("force_reload_form", False)
     
-    # 如果是切換了不同活動，或者是被強制要求重整，就去資料庫拿資料
     if st.session_state.form_event_code != current_code or force_reload:
         st.session_state.form_event_code = current_code
-        st.session_state.force_reload_form = False  # 🌟 資料拿完後，馬上把旗標關掉
+        st.session_state.force_reload_form = False 
         
         all_responses = db.load_responses()
         my_records = all_responses[
@@ -48,7 +56,22 @@ def render_fill_form(REDIRECT_URI):
     st.title(f"📝 填寫請假表：{event_info['活動名稱']}")
     st.caption(f"👑 主揪：{event_info['主揪']} | 🔑 活動代碼：`{current_code}`")
     
-    share_url = f"{REDIRECT_URI}?code={current_code}"
+    # 🌟 網址合成終極版 (為你量身打造)
+    base_url = ""
+    if "BASE_URL" in st.secrets:
+        base_url = st.secrets["BASE_URL"]
+    elif REDIRECT_URI:
+        base_url = REDIRECT_URI
+    else:
+        # 我從你的截圖看到你的專案網址是這個！直接幫你寫成完美備用選項：
+        base_url = "https://gooutandplay.streamlit.app"
+        
+    # 確保網址結尾乾淨
+    if base_url.endswith("/"):
+        base_url = base_url[:-1]
+        
+    share_url = f"{base_url}/?code={current_code}"
+    
     st.info(f"🔗 **邀請朋友加入**：複製下方網址給朋友\n`{share_url}`")
     
     start_date = datetime.strptime(str(event_info['開始日期']), "%Y-%m-%d").date()
@@ -112,9 +135,7 @@ def render_fill_form(REDIRECT_URI):
             
     if st.button("🏠 回首頁 (離開活動)"):
         st.session_state.page = "home"
-        st.query_params.clear()
         st.rerun()
-
 
 def render_view_results():
     current_code = st.session_state.current_event_code
@@ -159,7 +180,6 @@ def render_view_results():
                 
             st.subheader("📅 黃金出遊月曆")
             
-            # 呼叫 helpers (原 utils) 裡面的 HTML 產生器
             calendar_html = helpers.generate_calendar_html(start_date, end_date, golden_dates, busy_dict, current_code)
             st.markdown(calendar_html, unsafe_allow_html=True)
             
@@ -182,11 +202,9 @@ def render_view_results():
         with col1:
             if st.button("← 修改我的請假表", use_container_width=True):
                 st.session_state.page = "fill_form"
-                # 🌟 核心按鈕：在這裡按下時，將旗標開啟，指示填寫頁面重新向資料庫要資料
                 st.session_state.force_reload_form = True 
                 st.rerun()
         with col2:
             if st.button("🏠 回首頁 (離開活動)", use_container_width=True):
                 st.session_state.page = "home"
-                st.query_params.clear()
                 st.rerun()
