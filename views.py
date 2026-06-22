@@ -289,17 +289,14 @@ def render_join_event():
         st.rerun()
 
 # ==========================================
-# 畫面 D：填寫你的請假表 
+# 畫面 D：填寫你的請假表（優化：修正切換頁面導致紀錄遺失的 Bug）
 # ==========================================
 def toggle_date(date_str):
-    # 🌟 關鍵連動修正：先複製一份成新的 list，避免原地修改導致 Streamlit 偵測不到物件變更
     current_dates = list(st.session_state.form_selected_dates)
     if date_str in current_dates:
         current_dates.remove(date_str)
     else:
         current_dates.append(date_str)
-    
-    # 🌟 重新賦值給 session_state，這樣上方的 st.multiselect 就會感知到變更並即時連動更新
     st.session_state.form_selected_dates = current_dates
 
 def render_fill_form(REDIRECT_URI):
@@ -307,7 +304,9 @@ def render_fill_form(REDIRECT_URI):
     events_df = db.load_events()
     event_info = events_df[events_df["活動代碼"] == current_code].iloc[0]
     
-    if st.session_state.form_event_code != current_code:
+    # 🌟 關鍵修正：如果切換了不同活動，或者是發現暫存 Key 不在 session_state 中
+    # （代表剛從統計結果頁切換回來，遭 Streamlit 元件機制清空），就重新從資料庫載入最正確的紀錄
+    if st.session_state.form_event_code != current_code or "form_selected_dates" not in st.session_state:
         st.session_state.form_event_code = current_code
         all_responses = db.load_responses()
         my_records = all_responses[
@@ -323,6 +322,7 @@ def render_fill_form(REDIRECT_URI):
         if not my_records.empty:
             st.session_state.form_default_name = my_records["姓名"].iloc[0]
             saved_dates = my_records["沒空日期"].tolist()
+            # 過濾並載入資料庫內原本就勾選的日期
             st.session_state.form_selected_dates = [d for d in saved_dates if d in date_options]
         else:
             st.session_state.form_default_name = st.session_state.display_name
@@ -343,9 +343,8 @@ def render_fill_form(REDIRECT_URI):
     
     st.divider()
     st.markdown("### 📅 標記你「沒空」的日子")
-    st.caption("提示：可以從下拉選單選擇，也可以直接點擊下方月曆。紅色按鈕（Primary）代表那一天你請假囉！")
+    st.caption("提示：可以從下拉選單選擇，也可以直接點擊下方月曆。紅色按鈕代表那一天你請假囉！")
     
-    # 🌟 原本的下拉選單保留，透過相同的 key 達成同步
     st.multiselect("已選取的請假日清單：", date_options, key="form_selected_dates")
     
     current_m = start_date.replace(day=1)
