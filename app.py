@@ -1,7 +1,8 @@
 import streamlit as st
 import pandas as pd
 from datetime import datetime, timedelta
-import requests  # 新增：用來跟 Google 溝通
+import requests
+import calendar  # 新增：用來畫互動式月曆
 import database as db
 import utils
 
@@ -18,6 +19,16 @@ except:
     REDIRECT_URI = ""
 
 # ==========================================
+# 定義月曆點擊的連動魔法
+# ==========================================
+def toggle_date(date_str):
+    # 如果日期已經在清單裡，就把它拿掉；如果不在，就加進去
+    if date_str in st.session_state.form_selected_dates:
+        st.session_state.form_selected_dates.remove(date_str)
+    else:
+        st.session_state.form_selected_dates.append(date_str)
+
+# ==========================================
 # 狀態管理與 Google 登入攔截
 # ==========================================
 if "page" not in st.session_state:
@@ -31,18 +42,21 @@ if "username" not in st.session_state:
 if "display_name" not in st.session_state:
     st.session_state.display_name = ""
 
-# 捕捉網址參數 (結合 Google Auth 與 揪團邀請碼)
+# --- 新增：表單專屬的記憶體 ---
+if "form_event_code" not in st.session_state:
+    st.session_state.form_event_code = ""
+if "form_selected_dates" not in st.session_state:
+    st.session_state.form_selected_dates = []
+if "form_default_name" not in st.session_state:
+    st.session_state.form_default_name = ""
+
 if "code" in st.query_params:
     url_code = st.query_params["code"]
-    
     if len(url_code) == 5:
-        # 1. 這是揪團邀請碼
         st.session_state.current_event_code = url_code
         if st.session_state.logged_in:
             st.session_state.page = "fill_form"
-            
     elif len(url_code) > 20 and not st.session_state.logged_in:
-        # 2. 這是 Google 登入回傳的驗證碼
         token_url = "https://oauth2.googleapis.com/token"
         data = {
             "code": url_code,
@@ -54,7 +68,6 @@ if "code" in st.query_params:
         res = requests.post(token_url, data=data)
         if res.status_code == 200:
             access_token = res.json().get("access_token")
-            # 拿 Token 去換取使用者的 Email 和名字
             user_info_url = "https://www.googleapis.com/oauth2/v1/userinfo"
             headers = {"Authorization": f"Bearer {access_token}"}
             user_res = requests.get(user_info_url, headers=headers)
@@ -64,23 +77,20 @@ if "code" in st.query_params:
                 user_email = user_info.get("email")
                 user_name = user_info.get("name")
                 
-                # 自動註冊或登入
                 users_df = db.load_users()
                 if user_email not in users_df["帳號"].values:
-                    # 第一次用 Google 登入，自動建立帳號
                     db.register_user(user_email, utils.hash_password("google_oauth_dummy"), user_name)
                 
                 st.session_state.logged_in = True
                 st.session_state.username = user_email
                 st.session_state.display_name = user_name
                 
-                # 登入後判斷要去哪裡
                 if st.session_state.current_event_code:
                     st.session_state.page = "fill_form"
                 else:
                     st.session_state.page = "home"
                 
-                st.query_params.clear() # 把網址清乾淨
+                st.query_params.clear()
                 st.rerun()
             else:
                 st.error("獲取 Google 帳號資料失敗！")
@@ -172,7 +182,6 @@ if st.session_state.logged_in:
 if not st.session_state.logged_in:
     st.title("🔐 歡迎來到揪團神器")
     
-    # --- 新增：Google 一鍵登入大按鈕 ---
     if CLIENT_ID:
         auth_url = f"https://accounts.google.com/o/oauth2/v2/auth?client_id={CLIENT_ID}&redirect_uri={REDIRECT_URI}&response_type=code&scope=openid%20email%20profile"
         st.link_button("🌐 使用 Google 帳號一鍵登入", auth_url, type="primary", use_container_width=True)
@@ -192,7 +201,6 @@ if not st.session_state.logged_in:
                     st.session_state.logged_in = True
                     st.session_state.username = login_user
                     st.session_state.display_name = user_data["顯示名稱"]
-                    
                     if st.session_state.current_event_code:
                         st.session_state.page = "fill_form"
                     else:
@@ -281,17 +289,38 @@ elif st.session_state.page == "join_event":
         st.rerun()
 
 # ==========================================
-# 畫面 D：填寫你的請假表
+# 畫面 D：填寫你的請假表 (大幅升級互動月曆！)
 # ==========================================
 elif st.session_state.page == "fill_form":
     current_code = st.session_state.current_event_code
     events_df = db.load_events()
     event_info = events_df[events_df["活動代碼"] == current_code].iloc[0]
     
+    # 判斷是否進入了新的表單，如果是，才重新去資料庫撈紀錄
+    if st.session_state.form_event_code != current_code:
+        st.session_state.form_event_code = current_code
+        all_responses = db.load_responses()
+        my_records = all_responses[
+            (all_responses["活動代碼"] == current_code) & 
+            (all_responses["參與者帳號"] == st.session_state.username)
+        ]
+        
+        start_date = datetime.strptime(str(event_info['開始日期']), "%Y-%m-%d").date()
+        end_date = datetime.strptime(str(event_info['結束日期']), "%Y-%m-%d").date()
+        delta = end_date - start_date
+        date_options = [(start_date + timedelta(days=i)).strftime("%Y-%m-%d") for i in range(delta.days + 1)]
+        
+        if not my_records.empty:
+            st.session_state.form_default_name = my_records["姓名"].iloc[0]
+            saved_dates = my_records["沒空日期"].tolist()
+            st.session_state.form_selected_dates = [d for d in saved_dates if d in date_options]
+        else:
+            st.session_state.form_default_name = st.session_state.display_name
+            st.session_state.form_selected_dates = []
+
     st.title(f"📝 填寫請假表：{event_info['活動名稱']}")
     st.caption(f"👑 主揪：{event_info['主揪']} | 🔑 活動代碼：`{current_code}`")
     
-    # 分享網址功能
     share_url = f"{REDIRECT_URI}?code={current_code}"
     st.info(f"🔗 **邀請朋友加入**：複製下方網址給朋友\n`{share_url}`")
     
@@ -300,31 +329,68 @@ elif st.session_state.page == "fill_form":
     delta = end_date - start_date
     date_options = [(start_date + timedelta(days=i)).strftime("%Y-%m-%d") for i in range(delta.days + 1)]
 
-    # --- 新增：去資料庫抓取以前填過的紀錄 ---
-    all_responses = db.load_responses()
-    my_records = all_responses[
-        (all_responses["活動代碼"] == current_code) & 
-        (all_responses["參與者帳號"] == st.session_state.username)
-    ]
+    participant_name = st.text_input("你在本揪團的暱稱：", value=st.session_state.form_default_name)
     
-    # 預設值設定 (如果沒填過，就用原本的名字和空陣列)
-    default_name = st.session_state.display_name
-    default_dates = []
+    st.divider()
+    st.markdown("### 📅 標記你「沒空」的日子")
+    st.caption("提示：可以從下拉選單選擇，也可以直接點擊下方月曆。紅色按鈕代表那一天你請假囉！")
     
-    if not my_records.empty:
-        # 如果以前填過，就把暱稱換成上次填的
-        default_name = my_records["姓名"].iloc[0]
-        # 把上次選的日期抓出來 (過濾掉"完全有空"的防呆字眼)
-        saved_dates = my_records["沒空日期"].tolist()
-        default_dates = [d for d in saved_dates if d in date_options]
+    # 1. 舊的下拉選單：透過 key 直接跟 session_state 綁定，達成連動
+    st.multiselect(
+        "已選取的請假日清單：", 
+        date_options, 
+        key="form_selected_dates"
+    )
+    
+    # 2. 新的互動式月曆按鈕
+    current_m = start_date.replace(day=1)
+    months = []
+    while current_m <= end_date:
+        months.append((current_m.year, current_m.month))
+        if current_m.month == 12:
+            current_m = current_m.replace(year=current_m.year + 1, month=1)
+        else:
+            current_m = current_m.replace(month=current_m.month + 1)
+            
+    for year, month in months:
+        st.markdown(f"<h5 style='text-align: center; margin-top: 15px;'>{year}年 {month}月</h5>", unsafe_allow_html=True)
+        weekdays = ["一", "二", "三", "四", "五", "六", "日"]
+        cols = st.columns(7)
+        for i, wd in enumerate(weekdays):
+            cols[i].markdown(f"<div style='text-align: center; font-size: 14px; color: gray;'>{wd}</div>", unsafe_allow_html=True)
+            
+        cal = calendar.monthcalendar(year, month)
+        for week_idx, week in enumerate(cal):
+            cols = st.columns(7)
+            for i, day in enumerate(week):
+                if day != 0:
+                    current_date = datetime(year, month, day).date()
+                    date_str = current_date.strftime("%Y-%m-%d")
+                    # 不在發起人設定的日期範圍內，變成反灰不可點選
+                    if current_date < start_date or current_date > end_date:
+                        cols[i].button(str(day), key=f"dis_{year}_{month}_{day}", disabled=True, use_container_width=True)
+                    else:
+                        # 檢查這天是否在我們選取的清單內
+                        is_selected = date_str in st.session_state.form_selected_dates
+                        btn_type = "primary" if is_selected else "secondary"
+                        
+                        # 點擊按鈕時，觸發 toggle_date 來更新狀態
+                        cols[i].button(
+                            str(day), 
+                            key=f"calbtn_{date_str}", 
+                            type=btn_type, 
+                            on_click=toggle_date, 
+                            args=(date_str,), 
+                            use_container_width=True
+                        )
+                else:
+                    cols[i].markdown("<div style='min-height: 40px;'></div>", unsafe_allow_html=True)
 
-    # --- 升級：將預設值帶入輸入框 ---
-    participant_name = st.text_input("你在本揪團的暱稱：", value=default_name)
-    selected_dates = st.multiselect(f"選擇你在這段期間「沒空」的日期：", date_options, default=default_dates)
-
-    if st.button("送出並查看結果", type="primary"):
+    st.divider()
+    if st.button("送出並查看結果", type="primary", use_container_width=True):
         if participant_name:
-            db.save_response(current_code, st.session_state.username, participant_name, selected_dates)
+            # 存檔時，直接拿 st.session_state 裡面的名單
+            db.save_response(current_code, st.session_state.username, participant_name, st.session_state.form_selected_dates)
             st.session_state.page = "view_results"
             st.rerun()
         else:
@@ -334,7 +400,7 @@ elif st.session_state.page == "fill_form":
         st.session_state.page = "home"
         st.query_params.clear()
         st.rerun()
-        
+
 # ==========================================
 # 畫面 E：即時統計結果
 # ==========================================
@@ -380,7 +446,7 @@ elif st.session_state.page == "view_results":
                 golden_dates = date_options
                 
             st.subheader("📅 黃金出遊月曆")
-            st.caption("提示：🟩 綠色代表大家都有空。灰色代表有人請假，**滑鼠移過去可看誰沒空**。")
+            st.caption("提示：🟩 綠色代表大家都有空。灰色代表有人請假，**點擊或長按可看誰沒空**。")
             
             calendar_html = utils.generate_calendar_html(start_date, end_date, golden_dates, busy_dict, current_code)
             st.markdown(calendar_html, unsafe_allow_html=True)
