@@ -1,8 +1,9 @@
 import streamlit as st
 import requests
-import core.database as db
-import utils.helpers as helpers
-import views.views as views  # 引入我們剛剛建立的 UI 模組！
+from core import database as db
+from utils import helpers
+# 🌟 修正點 1：將拆分出來的三個 UI 小弟都引入
+from views import auth_views, event_views, form_views 
 
 # ==========================================
 # 讀取 Google 金鑰
@@ -35,6 +36,8 @@ if "form_selected_dates" not in st.session_state:
     st.session_state.form_selected_dates = []
 if "form_default_name" not in st.session_state:
     st.session_state.form_default_name = ""
+if "force_reload_form" not in st.session_state:
+    st.session_state.force_reload_form = False
 
 # ==========================================
 # 網址參數捕捉 (Google 登入與邀請碼攔截)
@@ -89,20 +92,27 @@ if "code" in st.query_params:
 st.set_page_config(page_title="揪團時間表", page_icon="📅")
 
 # ==========================================
-# 網頁路由 (Router)：分配工作給 views.py
+# 網頁路由 (Router)：分配工作給對應的模組
 # ==========================================
 if st.session_state.logged_in:
-    views.render_sidebar()
+    # 側邊欄由 auth_views 負責
+    auth_views.render_sidebar()
 
 if not st.session_state.logged_in:
-    views.render_login(CLIENT_ID, REDIRECT_URI)
+    # 登入頁面由 auth_views 負責
+    auth_views.render_login(CLIENT_ID, REDIRECT_URI)
 elif st.session_state.page == "home":
-    views.render_home()
+    # 首頁由 event_views 負責
+    event_views.render_home()
 elif st.session_state.page == "create_event":
-    views.render_create_event()
+    # 建立揪團由 event_views 負責
+    event_views.render_create_event()
 elif st.session_state.page == "join_event":
-    views.render_join_event()
+    # 加入揪團由 event_views 負責
+    event_views.render_join_event()
 elif st.session_state.page == "fill_form":
-    views.render_fill_form(REDIRECT_URI)
+    # 填寫表單由 form_views 負責
+    form_views.render_fill_form(REDIRECT_URI)
 elif st.session_state.page == "view_results":
-    views.render_view_results()
+    # 看結果也是由 form_views 負責
+    form_views.render_view_results()
