@@ -50,14 +50,14 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 # ==========================================
-# 🌟 Cookie 初始化 (用於維持登入狀態)
+# 🌟 Cookie 初始化 (正確寫法：直接宣告，不要放進 session_state)
 # ==========================================
-if "cookies" not in st.session_state:
-    st.session_state.cookies = CookieManager()
+# CookieManager 每次執行都必須在頂層宣告，才會正常驅動底層元件
+cookies = CookieManager()
 
-cookies = st.session_state.cookies
-# 確保 Cookie 載入完成才繼續往下跑，避免畫面閃爍
 if not cookies.ready():
+    # 加上一個載入提示，如果真的需要讀取零點幾秒，至少不會是白屏
+    st.markdown("<h4 style='text-align: center; color: gray; margin-top: 30vh;'>🍪 正在讀取登入狀態...</h4>", unsafe_allow_html=True)
     st.stop()
 
 # ==========================================
