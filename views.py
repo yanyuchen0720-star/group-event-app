@@ -152,24 +152,19 @@ def render_home():
             st.rerun()
 
 # ==========================================
-# 畫面 B：我是主揪（優化：支援月曆區間點選與雙向連動）
+# 畫面 B：我是主揪（優化：單一月曆搭配年月切換與雙向連動）
 # ==========================================
 def toggle_create_date(clicked_date):
-    # 🌟 將目前的 picker 內容轉換為 list，確保型態安全
     current_val = list(st.session_state.create_date_picker)
     
     if not current_val:
-        # 情況 1：原本沒選，點擊後成為第一個錨點
         st.session_state.create_date_picker = [clicked_date]
     elif len(current_val) == 1:
-        # 情況 2：原本已選一天，點擊第二天時自動排序結合成區間 [開始日, 結束日]
         st.session_state.create_date_picker = sorted([current_val[0], clicked_date])
     else:
-        # 情況 3：原本已經選好完整區間，再次點擊時重置並以新點擊日為起點
         st.session_state.create_date_picker = [clicked_date]
 
 def render_create_event():
-    # 🌟 初始化主揪日期選擇器的 Session State 狀態
     if "create_date_picker" not in st.session_state:
         st.session_state.create_date_picker = []
 
@@ -177,7 +172,7 @@ def render_create_event():
     organizer_name = st.text_input("你在本揪團的暱稱 (主揪)：", value=st.session_state.display_name)
     event_name = st.text_input("活動名稱：")
     
-    # 🌟 將 st.date_input 綁定 key，與 session_state 達成雙向連動
+    # 將 st.date_input 綁定 key，與 session_state 達成雙向連動
     date_range = st.date_input(
         "預計出遊區間 (請選『開始』與『結束』日)：", 
         key="create_date_picker"
@@ -187,59 +182,80 @@ def render_create_event():
     st.markdown("### 📅 點擊月曆快速選擇區間")
     st.caption("提示：點選第一個日期作為開始日，點選第二個日期作為結束日。月曆會自動渲染選取範圍，且與上方輸入框即時同步！")
     
-    # 自動動態產生「本月、下月、下下月」共 3 個月的月曆供主揪挑選未來時間
+    # 🌟 獲取今天日期，用作預設值與防呆
     today = datetime.today().date()
-    current_m = today.replace(day=1)
-    months = []
-    for _ in range(3):
-        months.append((current_m.year, current_m.month))
-        if current_m.month == 12:
-            current_m = current_m.replace(year=current_m.year + 1, month=1)
-        else:
-            current_m = current_m.replace(month=current_m.month + 1)
-            
-    for year, month in months:
-        st.markdown(f"<h5 style='text-align: center; margin-top: 15px;'>{year}年 {month}月</h5>", unsafe_allow_html=True)
-        weekdays = ["一", "二", "三", "四", "五", "六", "日"]
+    
+    # 🌟 初始化年月的 Session State，確保切換時狀態不遺失
+    if "create_cal_year" not in st.session_state:
+        st.session_state.create_cal_year = today.year
+    if "create_cal_month" not in st.session_state:
+        st.session_state.create_cal_month = today.month
+
+    # 🌟 建立年、月的選擇下拉選單（橫向並排）
+    year_cols, month_cols = st.columns(2)
+    with year_cols:
+        # 提供今年到未來 5 年的長遠選項
+        year_options = list(range(today.year, today.year + 6))
+        selected_year = st.selectbox(
+            "選擇年份", 
+            year_options, 
+            index=year_options.index(st.session_state.create_cal_year)
+        )
+        st.session_state.create_cal_year = selected_year
+        
+    with month_cols:
+        month_options = list(range(1, 13))
+        selected_month = st.selectbox(
+            "選擇月份", 
+            month_options, 
+            index=month_options.index(st.session_state.create_cal_month)
+        )
+        st.session_state.create_cal_month = selected_month
+
+    # 🌟 根據選取的年份與月份，渲染單一月份的月曆
+    year = st.session_state.create_cal_year
+    month = st.session_state.create_cal_month
+    
+    st.markdown(f"<h5 style='text-align: center; margin-top: 10px;'>{year}年 {month}月</h5>", unsafe_allow_html=True)
+    weekdays = ["一", "二", "三", "四", "五", "六", "日"]
+    cols = st.columns(7)
+    for i, wd in enumerate(weekdays):
+        cols[i].markdown(f"<div style='text-align: center; font-size: 14px; color: gray;'>{wd}</div>", unsafe_allow_html=True)
+        
+    cal = calendar.monthcalendar(year, month)
+    for week_idx, week in enumerate(cal):
         cols = st.columns(7)
-        for i, wd in enumerate(weekdays):
-            cols[i].markdown(f"<div style='text-align: center; font-size: 14px; color: gray;'>{wd}</div>", unsafe_allow_html=True)
-            
-        cal = calendar.monthcalendar(year, month)
-        for week_idx, week in enumerate(cal):
-            cols = st.columns(7)
-            for i, day in enumerate(week):
-                if day != 0:
-                    current_date = datetime(year, month, day).date()
+        for i, day in enumerate(week):
+            if day != 0:
+                current_date = datetime(year, month, day).date()
+                
+                # 核心連動高亮邏輯：判斷該日期是否在目前選定的範圍內
+                current_val = list(st.session_state.create_date_picker)
+                is_selected = False
+                if len(current_val) == 1:
+                    is_selected = (current_date == current_val[0])
+                elif len(current_val) == 2:
+                    is_selected = (current_val[0] <= current_date <= current_val[1])
                     
-                    # 🌟 核心連動高亮邏輯：判斷該日期是否在目前選定的範圍內
-                    current_val = list(st.session_state.create_date_picker)
-                    is_selected = False
-                    if len(current_val) == 1:
-                        is_selected = (current_date == current_val[0])
-                    elif len(current_val) == 2:
-                        is_selected = (current_val[0] <= current_date <= current_val[1])
-                        
-                    btn_type = "primary" if is_selected else "secondary"
-                    
-                    # 防呆機制：過去的日期防呆不給點選
-                    if current_date < today:
-                        cols[i].button(str(day), key=f"create_dis_{year}_{month}_{day}", disabled=True, use_container_width=True)
-                    else:
-                        cols[i].button(
-                            str(day), 
-                            key=f"create_calbtn_{current_date.strftime('%Y-%m-%d')}", 
-                            type=btn_type, 
-                            on_click=toggle_create_date, 
-                            args=(current_date,), 
-                            use_container_width=True
-                        )
+                btn_type = "primary" if is_selected else "secondary"
+                
+                # 防呆機制：過去的日期不給點選
+                if current_date < today:
+                    cols[i].button(str(day), key=f"create_dis_{year}_{month}_{day}", disabled=True, use_container_width=True)
                 else:
-                    cols[i].markdown("<div style='min-height: 40px;'></div>", unsafe_allow_html=True)
+                    cols[i].button(
+                        str(day), 
+                        key=f"create_calbtn_{current_date.strftime('%Y-%m-%d')}", 
+                        type=btn_type, 
+                        on_click=toggle_create_date, 
+                        args=(current_date,), 
+                        use_container_width=True
+                    )
+            else:
+                cols[i].markdown("<div style='min-height: 40px;'></div>", unsafe_allow_html=True)
 
     st.divider()
     if st.button("確認建立活動", type="primary"):
-        # 🌟 確保從雙向連動的 date_range 讀取最終選定的資料
         if organizer_name and event_name and len(date_range) == 2:
             start_date, end_date = date_range
             new_code = utils.generate_event_code()
