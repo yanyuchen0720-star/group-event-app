@@ -196,10 +196,15 @@ def render_join_event():
 # 畫面 D：填寫你的請假表 
 # ==========================================
 def toggle_date(date_str):
-    if date_str in st.session_state.form_selected_dates:
-        st.session_state.form_selected_dates.remove(date_str)
+    # 🌟 關鍵連動修正：先複製一份成新的 list，避免原地修改導致 Streamlit 偵測不到物件變更
+    current_dates = list(st.session_state.form_selected_dates)
+    if date_str in current_dates:
+        current_dates.remove(date_str)
     else:
-        st.session_state.form_selected_dates.append(date_str)
+        current_dates.append(date_str)
+    
+    # 🌟 重新賦值給 session_state，這樣上方的 st.multiselect 就會感知到變更並即時連動更新
+    st.session_state.form_selected_dates = current_dates
 
 def render_fill_form(REDIRECT_URI):
     current_code = st.session_state.current_event_code
@@ -242,8 +247,9 @@ def render_fill_form(REDIRECT_URI):
     
     st.divider()
     st.markdown("### 📅 標記你「沒空」的日子")
-    st.caption("提示：可以從下拉選單選擇，也可以直接點擊下方月曆。紅色按鈕代表那一天你請假囉！")
+    st.caption("提示：可以從下拉選單選擇，也可以直接點擊下方月曆。紅色按鈕（Primary）代表那一天你請假囉！")
     
+    # 🌟 原本的下拉選單保留，透過相同的 key 達成同步
     st.multiselect("已選取的請假日清單：", date_options, key="form_selected_dates")
     
     current_m = start_date.replace(day=1)
