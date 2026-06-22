@@ -6,41 +6,29 @@ from views import auth_views, event_views, form_views
 from streamlit_cookies_manager import CookieManager 
 
 # ==========================================
-# 🌟 頁面基本設定 (必須是第一個 st. 指令)
+# 🌟 頁面基本設定
 # ==========================================
 st.set_page_config(page_title="揪團時間表", page_icon="📅")
 
-# ==========================================
-# 🌟 針對手機版月曆的 CSS 終極響應式修正
-# ==========================================
 st.markdown("""
 <style>
-/* 當螢幕寬度小於 640px (涵蓋大部分手機直放尺寸) 時觸發 */
 @media (max-width: 640px) {
-    /* 1. 外層容器：強制橫向排列，並且縮小欄位間的縫隙 */
     div[data-testid="stHorizontalBlock"]:has(> div:nth-child(7)) {
         display: flex !important;
         flex-direction: row !important;
         flex-wrap: nowrap !important;
         gap: 2px !important; 
     }
-    
-    /* 2. 終極殺招：內層的 7 個小欄位 */
-    /* Streamlit 在極窄螢幕會強制子欄位變成 100%，我們必須把它壓回 1/7 */
     div[data-testid="stHorizontalBlock"]:has(> div:nth-child(7)) > div {
         width: 14.28% !important;
-        min-width: 0 !important; /* 徹底覆寫預設的 min-width: 100% */
+        min-width: 0 !important; 
         flex: 1 1 auto !important;
     }
-    
-    /* 3. 按鈕的終極瘦身：拿掉 padding、縮小字體以塞進狹窄的直放螢幕 */
     div[data-testid="stHorizontalBlock"]:has(> div:nth-child(7)) button {
         padding: 0 !important;
         font-size: 13px !important; 
         min-height: 2.2rem !important;
     }
-    
-    /* 4. 上方星期幾 (一, 二, 三...) 的字體微調 */
     div[data-testid="stHorizontalBlock"]:has(> div:nth-child(7)) div[data-testid="stMarkdownContainer"] p {
         font-size: 12px !important;
         margin-bottom: 0.2rem !important;
@@ -50,18 +38,15 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 # ==========================================
-# 🌟 Cookie 初始化 (正確寫法：直接宣告，不要放進 session_state)
+# 🌟 Cookie 初始化
 # ==========================================
-# CookieManager 每次執行都必須在頂層宣告，才會正常驅動底層元件
 cookies = CookieManager()
-
 if not cookies.ready():
-    # 加上一個載入提示，如果真的需要讀取零點幾秒，至少不會是白屏
     st.markdown("<h4 style='text-align: center; color: gray; margin-top: 30vh;'>🍪 正在讀取登入狀態...</h4>", unsafe_allow_html=True)
     st.stop()
 
 # ==========================================
-# 讀取 Google 金鑰
+# 讀取金鑰
 # ==========================================
 try:
     CLIENT_ID = st.secrets["GOOGLE_CLIENT_ID"]
@@ -73,7 +58,7 @@ except:
     REDIRECT_URI = ""
 
 # ==========================================
-# 狀態管理初始化 (大腦記憶體)
+# 狀態管理初始化
 # ==========================================
 if "page" not in st.session_state:
     st.session_state.page = "login"
@@ -94,33 +79,34 @@ if "form_default_name" not in st.session_state:
 if "force_reload_form" not in st.session_state:
     st.session_state.force_reload_form = False
 
-# ==========================================
-# 🌟 自動登入攔截：檢查瀏覽器 Cookie 是否有紀錄
-# ==========================================
+# 自動登入攔截
 if not st.session_state.logged_in and cookies.get("auto_login_user"):
     cached_user = cookies.get("auto_login_user")
     users_df = db.load_users()
-    
-    # 確認資料庫中真的有這個帳號
     if cached_user in users_df["帳號"].values:
         user_data = users_df[users_df["帳號"] == cached_user].iloc[0]
         st.session_state.logged_in = True
         st.session_state.username = cached_user
         st.session_state.display_name = user_data["顯示名稱"]
-        
-        # 如果使用者原本停在登入頁，就自動導向首頁
         if st.session_state.page == "login":
             st.session_state.page = "home"
 
 # ==========================================
-# 網址參數捕捉 (Google 登入與邀請碼攔截)
+# 🌟 網址參數捕捉 (修正無限迴圈與卡死陷阱)
 # ==========================================
 if "code" in st.query_params:
     url_code = st.query_params["code"]
+    
+    # 情況 A：收到 5 碼的邀請碼
     if len(url_code) == 5:
         st.session_state.current_event_code = url_code
+        st.query_params.clear()  # 🌟 破除陷阱：一抓到代碼，立刻把網址清乾淨！
+        
         if st.session_state.logged_in:
             st.session_state.page = "fill_form"
+            st.rerun()  # 已經登入就直接跳轉
+            
+    # 情況 B：收到 Google 驗證碼
     elif len(url_code) > 20 and not st.session_state.logged_in:
         token_url = "https://oauth2.googleapis.com/token"
         data = {
@@ -150,16 +136,15 @@ if "code" in st.query_params:
                 st.session_state.username = user_email
                 st.session_state.display_name = user_name
                 
-                # 🌟 Google 登入成功後，將帳號寫入 Cookie
                 cookies["auto_login_user"] = user_email
                 cookies.save()
+                
+                st.query_params.clear() # Google 驗證碼也要清掉
                 
                 if st.session_state.current_event_code:
                     st.session_state.page = "fill_form"
                 else:
                     st.session_state.page = "home"
-                
-                st.query_params.clear()
                 st.rerun()
             else:
                 st.error("獲取 Google 帳號資料失敗！")
@@ -167,14 +152,12 @@ if "code" in st.query_params:
             st.error("Google 登入驗證過期，請重新點擊按鈕！")
 
 # ==========================================
-# 網頁路由 (Router)：分配工作給對應的模組
+# 網頁路由
 # ==========================================
 if st.session_state.logged_in:
-    # 傳入 cookies 給側邊欄，為了實現「登出並刪除 Cookie」功能
     auth_views.render_sidebar(cookies)
 
 if not st.session_state.logged_in:
-    # 傳入 cookies 給登入畫面，為了實現「登入後儲存 Cookie」功能
     auth_views.render_login(CLIENT_ID, REDIRECT_URI, cookies)
 elif st.session_state.page == "home":
     event_views.render_home()
