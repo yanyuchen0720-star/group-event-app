@@ -92,28 +92,39 @@ if "code" in st.query_params:
 st.set_page_config(page_title="揪團時間表", page_icon="📅")
 
 # ==========================================
-# 🌟 新增：針對手機版月曆的 CSS 強制修正
+# 🌟 新增：針對手機版月曆的 CSS 終極響應式修正
 # ==========================================
 st.markdown("""
 <style>
-/* 當螢幕寬度小於 640px (手機) 時觸發 */
+/* 當螢幕寬度小於 640px (涵蓋大部分手機直放尺寸) 時觸發 */
 @media (max-width: 640px) {
-    /* 利用 :has 選擇器，"只"針對擁有 7 個子元素(即月曆的7天)的水平區塊強制不換行 */
+    /* 1. 外層容器：強制橫向排列，並且縮小欄位間的縫隙 */
     div[data-testid="stHorizontalBlock"]:has(> div:nth-child(7)) {
+        display: flex !important;
         flex-direction: row !important;
         flex-wrap: nowrap !important;
+        gap: 2px !important; 
     }
     
-    /* 縮小手機版按鈕的內邊距與字體，確保 7 個按鈕塞得進螢幕 */
+    /* 2. 🌟 終極殺招：內層的 7 個小欄位 */
+    /* Streamlit 在極窄螢幕會強制子欄位變成 100%，我們必須把它壓回 1/7 */
+    div[data-testid="stHorizontalBlock"]:has(> div:nth-child(7)) > div {
+        width: 14.28% !important;
+        min-width: 0 !important; /* 徹底覆寫預設的 min-width: 100% */
+        flex: 1 1 auto !important;
+    }
+    
+    /* 3. 按鈕的終極瘦身：拿掉 padding、縮小字體以塞進狹窄的直放螢幕 */
     div[data-testid="stHorizontalBlock"]:has(> div:nth-child(7)) button {
-        padding: 0.2rem 0rem !important;
-        font-size: 14px !important;
-        min-height: 2.5rem !important;
+        padding: 0 !important;
+        font-size: 13px !important; 
+        min-height: 2.2rem !important;
     }
     
-    /* 縮小上方星期幾 (一, 二, 三...) 的字體 */
+    /* 4. 上方星期幾 (一, 二, 三...) 的字體微調 */
     div[data-testid="stHorizontalBlock"]:has(> div:nth-child(7)) div[data-testid="stMarkdownContainer"] p {
-        font-size: 13px !important;
+        font-size: 12px !important;
+        margin-bottom: 0.2rem !important;
     }
 }
 </style>
