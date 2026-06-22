@@ -290,6 +290,7 @@ elif st.session_state.page == "fill_form":
     
     st.title(f"📝 填寫請假表：{event_info['活動名稱']}")
     st.caption(f"👑 主揪：{event_info['主揪']} | 🔑 活動代碼：`{current_code}`")
+    
     # 分享網址功能
     share_url = f"{REDIRECT_URI}?code={current_code}"
     st.info(f"🔗 **邀請朋友加入**：複製下方網址給朋友\n`{share_url}`")
@@ -299,8 +300,27 @@ elif st.session_state.page == "fill_form":
     delta = end_date - start_date
     date_options = [(start_date + timedelta(days=i)).strftime("%Y-%m-%d") for i in range(delta.days + 1)]
 
-    participant_name = st.text_input("你在本揪團的暱稱：", value=st.session_state.display_name)
-    selected_dates = st.multiselect(f"選擇你在這段期間「沒空」的日期：", date_options)
+    # --- 新增：去資料庫抓取以前填過的紀錄 ---
+    all_responses = db.load_responses()
+    my_records = all_responses[
+        (all_responses["活動代碼"] == current_code) & 
+        (all_responses["參與者帳號"] == st.session_state.username)
+    ]
+    
+    # 預設值設定 (如果沒填過，就用原本的名字和空陣列)
+    default_name = st.session_state.display_name
+    default_dates = []
+    
+    if not my_records.empty:
+        # 如果以前填過，就把暱稱換成上次填的
+        default_name = my_records["姓名"].iloc[0]
+        # 把上次選的日期抓出來 (過濾掉"完全有空"的防呆字眼)
+        saved_dates = my_records["沒空日期"].tolist()
+        default_dates = [d for d in saved_dates if d in date_options]
+
+    # --- 升級：將預設值帶入輸入框 ---
+    participant_name = st.text_input("你在本揪團的暱稱：", value=default_name)
+    selected_dates = st.multiselect(f"選擇你在這段期間「沒空」的日期：", date_options, default=default_dates)
 
     if st.button("送出並查看結果", type="primary"):
         if participant_name:
@@ -314,7 +334,7 @@ elif st.session_state.page == "fill_form":
         st.session_state.page = "home"
         st.query_params.clear()
         st.rerun()
-
+        
 # ==========================================
 # 畫面 E：即時統計結果
 # ==========================================
