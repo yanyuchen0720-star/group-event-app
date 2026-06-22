@@ -1,8 +1,8 @@
 import streamlit as st
 import requests
-import database as db
-import utils
-import views  # 引入我們剛剛建立的 UI 模組！
+import core.database as db
+import utils.helpers as helpers
+import views.views as views  # 引入我們剛剛建立的 UI 模組！
 
 # ==========================================
 # 讀取 Google 金鑰
@@ -68,7 +68,7 @@ if "code" in st.query_params:
                 
                 users_df = db.load_users()
                 if user_email not in users_df["帳號"].values:
-                    db.register_user(user_email, utils.hash_password("google_oauth_dummy"), user_name)
+                    db.register_user(user_email, helpers.hash_password("google_oauth_dummy"), user_name)
                 
                 st.session_state.logged_in = True
                 st.session_state.username = user_email

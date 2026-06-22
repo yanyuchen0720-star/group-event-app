@@ -2,295 +2,9 @@ import streamlit as st
 import pandas as pd
 from datetime import datetime, timedelta
 import calendar
-import database as db
-import utils
+from core import database as db
+from utils import helpers
 
-# ==========================================
-# 側邊欄
-# ==========================================
-def render_sidebar():
-    with st.sidebar:
-        st.markdown(f"### 👋 嗨，{st.session_state.display_name}")
-        st.caption(f"帳號：{st.session_state.username}")
-        st.divider()
-        st.markdown("### 📂 我的揪團")
-        events_df = db.load_events()
-        responses_df = db.load_responses()
-        
-        if not events_df.empty:
-            created_events = events_df[events_df["主揪帳號"] == st.session_state.username]
-            if not responses_df.empty:
-                joined_codes = responses_df[responses_df["參與者帳號"] == st.session_state.username]["活動代碼"].unique()
-                joined_events = events_df[events_df["活動代碼"].isin(joined_codes)]
-                joined_events = joined_events[~joined_events["活動代碼"].isin(created_events["活動代碼"])]
-            else:
-                joined_events = pd.DataFrame()
-        else:
-            created_events = pd.DataFrame()
-            joined_events = pd.DataFrame()
-            
-        if not created_events.empty:
-            with st.expander("👑 我發起的", expanded=False):
-                for _, row in created_events.iterrows():
-                    code = row["活動代碼"]
-                    name = row["活動名稱"]
-                    col1, col2, col3 = st.columns([5, 1.5, 1.5])
-                    with col1:
-                        if st.button(f"{name}", key=f"c_go_{code}", use_container_width=True):
-                            st.session_state.current_event_code = code
-                            st.session_state.page = "view_results"
-                            st.rerun()
-                    with col2:
-                        if st.button("❌", key=f"c_lv_{code}", help="刪除我的請假表 (退出)"):
-                            db.leave_event(code, st.session_state.username)
-                            st.rerun()
-                    with col3:
-                        if st.button("🗑️", key=f"c_del_{code}", help="徹底刪除這個活動"):
-                            db.delete_event(code)
-                            if st.session_state.current_event_code == code:
-                                st.session_state.page = "home"
-                                st.session_state.current_event_code = ""
-                            st.rerun()
-                            
-        if not joined_events.empty:
-            with st.expander("🙋 我加入的", expanded=False):
-                for _, row in joined_events.iterrows():
-                    code = row["活動代碼"]
-                    name = row["活動名稱"]
-                    col1, col2 = st.columns([5, 1.5])
-                    with col1:
-                        if st.button(f"{name}", key=f"j_go_{code}", use_container_width=True):
-                            st.session_state.current_event_code = code
-                            st.session_state.page = "view_results"
-                            st.rerun()
-                    with col2:
-                        if st.button("❌", key=f"j_lv_{code}", help="刪除我的請假表 (退出)"):
-                            db.leave_event(code, st.session_state.username)
-                            if st.session_state.current_event_code == code:
-                                st.session_state.page = "home"
-                                st.session_state.current_event_code = ""
-                            st.rerun()
-                            
-        if created_events.empty and joined_events.empty:
-            st.info("目前還沒有紀錄喔！")
-
-        st.divider()
-        if st.button("🚪 登出", use_container_width=True):
-            st.session_state.logged_in = False
-            st.session_state.username = ""
-            st.session_state.display_name = ""
-            st.session_state.page = "login"
-            st.rerun()
-
-# ==========================================
-# 畫面 0：登入與註冊門神
-# ==========================================
-def render_login(CLIENT_ID, REDIRECT_URI):
-    st.title("🔐 歡迎來到揪團神器")
-    if CLIENT_ID:
-        auth_url = f"https://accounts.google.com/o/oauth2/v2/auth?client_id={CLIENT_ID}&redirect_uri={REDIRECT_URI}&response_type=code&scope=openid%20email%20profile"
-        st.link_button("🌐 使用 Google 帳號一鍵登入", auth_url, type="primary", use_container_width=True)
-        st.divider()
-        st.markdown("<p style='text-align: center; color: gray; font-size: 14px;'>或者使用傳統帳號密碼</p>", unsafe_allow_html=True)
-        
-    tab1, tab2 = st.tabs(["🔑 傳統登入", "📝 註冊新帳號"])
-    with tab1:
-        login_user = st.text_input("帳號", key="login_user")
-        login_pass = st.text_input("密碼", type="password", key="login_pass")
-        if st.button("登入"):
-            users_df = db.load_users()
-            if login_user in users_df["帳號"].values:
-                user_data = users_df[users_df["帳號"] == login_user].iloc[0]
-                if utils.verify_password(user_data["密碼雜湊"], login_pass):
-                    st.session_state.logged_in = True
-                    st.session_state.username = login_user
-                    st.session_state.display_name = user_data["顯示名稱"]
-                    if st.session_state.current_event_code:
-                        st.session_state.page = "fill_form"
-                    else:
-                        st.session_state.page = "home"
-                    st.rerun()
-                else:
-                    st.error("密碼錯誤，請再試一次！")
-            else:
-                st.error("找不到這個帳號，請先註冊喔！")
-
-    with tab2:
-        reg_user = st.text_input("設定帳號 (英文數字)", key="reg_user")
-        reg_name = st.text_input("顯示暱稱 (大家會看到這個名字)", key="reg_name")
-        reg_pass = st.text_input("設定密碼", type="password", key="reg_pass")
-        reg_pass2 = st.text_input("再次確認密碼", type="password", key="reg_pass2")
-        if st.button("註冊"):
-            if reg_user and reg_name and reg_pass:
-                if reg_pass == reg_pass2:
-                    hashed_pw = utils.hash_password(reg_pass)
-                    success = db.register_user(reg_user, hashed_pw, reg_name)
-                    if success:
-                        st.success("註冊成功！請切換到『登入』標籤頁進行登入。")
-                    else:
-                        st.error("這個帳號已經有人用了，換一個試試看吧！")
-                else:
-                    st.warning("兩次輸入的密碼不一樣喔！")
-            else:
-                st.warning("請填寫所有欄位！")
-    st.stop()
-
-# ==========================================
-# 畫面 A：首頁
-# ==========================================
-def render_home():
-    st.title("📅 揪團喬時間神器")
-    st.markdown("準備好開始了嗎？")
-    col1, col2 = st.columns(2)
-    with col1:
-        if st.button("👑 我是主揪 (建立新揪團)", use_container_width=True, type="primary"):
-            st.session_state.page = "create_event"
-            st.rerun()
-    with col2:
-        if st.button("🙋 加入揪團 (輸入代碼)", use_container_width=True):
-            st.session_state.page = "join_event"
-            st.rerun()
-
-# ==========================================
-# 畫面 B：我是主揪（優化：單一月曆搭配年月切換與雙向連動）
-# ==========================================
-def toggle_create_date(clicked_date):
-    current_val = list(st.session_state.create_date_picker)
-    
-    if not current_val:
-        st.session_state.create_date_picker = [clicked_date]
-    elif len(current_val) == 1:
-        st.session_state.create_date_picker = sorted([current_val[0], clicked_date])
-    else:
-        st.session_state.create_date_picker = [clicked_date]
-
-def render_create_event():
-    if "create_date_picker" not in st.session_state:
-        st.session_state.create_date_picker = []
-
-    st.title("👑 建立新揪團")
-    organizer_name = st.text_input("你在本揪團的暱稱 (主揪)：", value=st.session_state.display_name)
-    event_name = st.text_input("活動名稱：")
-    
-    # 將 st.date_input 綁定 key，與 session_state 達成雙向連動
-    date_range = st.date_input(
-        "預計出遊區間 (請選『開始』與『結束』日)：", 
-        key="create_date_picker"
-    )
-    
-    st.divider()
-    st.markdown("### 📅 點擊月曆快速選擇區間")
-    st.caption("提示：點選第一個日期作為開始日，點選第二個日期作為結束日。月曆會自動渲染選取範圍，且與上方輸入框即時同步！")
-    
-    # 🌟 獲取今天日期，用作預設值與防呆
-    today = datetime.today().date()
-    
-    # 🌟 初始化年月的 Session State，確保切換時狀態不遺失
-    if "create_cal_year" not in st.session_state:
-        st.session_state.create_cal_year = today.year
-    if "create_cal_month" not in st.session_state:
-        st.session_state.create_cal_month = today.month
-
-    # 🌟 建立年、月的選擇下拉選單（橫向並排）
-    year_cols, month_cols = st.columns(2)
-    with year_cols:
-        # 提供今年到未來 5 年的長遠選項
-        year_options = list(range(today.year, today.year + 6))
-        selected_year = st.selectbox(
-            "選擇年份", 
-            year_options, 
-            index=year_options.index(st.session_state.create_cal_year)
-        )
-        st.session_state.create_cal_year = selected_year
-        
-    with month_cols:
-        month_options = list(range(1, 13))
-        selected_month = st.selectbox(
-            "選擇月份", 
-            month_options, 
-            index=month_options.index(st.session_state.create_cal_month)
-        )
-        st.session_state.create_cal_month = selected_month
-
-    # 🌟 根據選取的年份與月份，渲染單一月份的月曆
-    year = st.session_state.create_cal_year
-    month = st.session_state.create_cal_month
-    
-    st.markdown(f"<h5 style='text-align: center; margin-top: 10px;'>{year}年 {month}月</h5>", unsafe_allow_html=True)
-    weekdays = ["一", "二", "三", "四", "五", "六", "日"]
-    cols = st.columns(7)
-    for i, wd in enumerate(weekdays):
-        cols[i].markdown(f"<div style='text-align: center; font-size: 14px; color: gray;'>{wd}</div>", unsafe_allow_html=True)
-        
-    cal = calendar.monthcalendar(year, month)
-    for week_idx, week in enumerate(cal):
-        cols = st.columns(7)
-        for i, day in enumerate(week):
-            if day != 0:
-                current_date = datetime(year, month, day).date()
-                
-                # 核心連動高亮邏輯：判斷該日期是否在目前選定的範圍內
-                current_val = list(st.session_state.create_date_picker)
-                is_selected = False
-                if len(current_val) == 1:
-                    is_selected = (current_date == current_val[0])
-                elif len(current_val) == 2:
-                    is_selected = (current_val[0] <= current_date <= current_val[1])
-                    
-                btn_type = "primary" if is_selected else "secondary"
-                
-                # 防呆機制：過去的日期不給點選
-                if current_date < today:
-                    cols[i].button(str(day), key=f"create_dis_{year}_{month}_{day}", disabled=True, use_container_width=True)
-                else:
-                    cols[i].button(
-                        str(day), 
-                        key=f"create_calbtn_{current_date.strftime('%Y-%m-%d')}", 
-                        type=btn_type, 
-                        on_click=toggle_create_date, 
-                        args=(current_date,), 
-                        use_container_width=True
-                    )
-            else:
-                cols[i].markdown("<div style='min-height: 40px;'></div>", unsafe_allow_html=True)
-
-    st.divider()
-    if st.button("確認建立活動", type="primary"):
-        if organizer_name and event_name and len(date_range) == 2:
-            start_date, end_date = date_range
-            new_code = utils.generate_event_code()
-            db.save_event(new_code, st.session_state.username, organizer_name, event_name, start_date, end_date)
-            st.session_state.current_event_code = new_code
-            st.session_state.page = "fill_form"
-            st.rerun()
-        else:
-            st.warning("⚠️ 請填寫暱稱及活動名稱，並確保日期選了兩天喔！")
-            
-    if st.button("← 返回首頁"):
-        st.session_state.page = "home"
-        st.rerun()
-
-# ==========================================
-# 畫面 C：加入揪團
-# ==========================================
-def render_join_event():
-    st.title("🙋 加入揪團")
-    input_code = st.text_input("請輸入活動代碼 (5 碼)：").upper()
-    if st.button("進入活動", type="primary"):
-        events_df = db.load_events()
-        if input_code in events_df["活動代碼"].values:
-            st.session_state.current_event_code = input_code
-            st.session_state.page = "fill_form"
-            st.rerun()
-        else:
-            st.error("❌ 找不到這個活動代碼！")
-    if st.button("← 返回首頁"):
-        st.session_state.page = "home"
-        st.rerun()
-
-# ==========================================
-# 畫面 D：填寫你的請假表（優化：修正切換頁面導致紀錄遺失的 Bug）
-# ==========================================
 def toggle_date(date_str):
     current_dates = list(st.session_state.form_selected_dates)
     if date_str in current_dates:
@@ -304,10 +18,14 @@ def render_fill_form(REDIRECT_URI):
     events_df = db.load_events()
     event_info = events_df[events_df["活動代碼"] == current_code].iloc[0]
     
-    # 🌟 關鍵修正：如果切換了不同活動，或者是發現暫存 Key 不在 session_state 中
-    # （代表剛從統計結果頁切換回來，遭 Streamlit 元件機制清空），就重新從資料庫載入最正確的紀錄
-    if st.session_state.form_event_code != current_code or "form_selected_dates" not in st.session_state:
+    # 🌟 真・修復：讀取我們剛才在 app.py 建立的強制重整旗標
+    force_reload = st.session_state.get("force_reload_form", False)
+    
+    # 如果是切換了不同活動，或者是被強制要求重整，就去資料庫拿資料
+    if st.session_state.form_event_code != current_code or force_reload:
         st.session_state.form_event_code = current_code
+        st.session_state.force_reload_form = False  # 🌟 資料拿完後，馬上把旗標關掉
+        
         all_responses = db.load_responses()
         my_records = all_responses[
             (all_responses["活動代碼"] == current_code) & 
@@ -322,7 +40,6 @@ def render_fill_form(REDIRECT_URI):
         if not my_records.empty:
             st.session_state.form_default_name = my_records["姓名"].iloc[0]
             saved_dates = my_records["沒空日期"].tolist()
-            # 過濾並載入資料庫內原本就勾選的日期
             st.session_state.form_selected_dates = [d for d in saved_dates if d in date_options]
         else:
             st.session_state.form_default_name = st.session_state.display_name
@@ -343,8 +60,6 @@ def render_fill_form(REDIRECT_URI):
     
     st.divider()
     st.markdown("### 📅 標記你「沒空」的日子")
-    st.caption("提示：可以從下拉選單選擇，也可以直接點擊下方月曆。紅色按鈕代表那一天你請假囉！")
-    
     st.multiselect("已選取的請假日清單：", date_options, key="form_selected_dates")
     
     current_m = start_date.replace(day=1)
@@ -400,9 +115,7 @@ def render_fill_form(REDIRECT_URI):
         st.query_params.clear()
         st.rerun()
 
-# ==========================================
-# 畫面 E：即時統計結果
-# ==========================================
+
 def render_view_results():
     current_code = st.session_state.current_event_code
     events_df = db.load_events()
@@ -445,9 +158,9 @@ def render_view_results():
                 golden_dates = date_options
                 
             st.subheader("📅 黃金出遊月曆")
-            st.caption("提示：🟩 綠色代表大家都有空。灰色代表有人請假，**點擊或長按可看誰沒空**。")
             
-            calendar_html = utils.generate_calendar_html(start_date, end_date, golden_dates, busy_dict, current_code)
+            # 呼叫 helpers (原 utils) 裡面的 HTML 產生器
+            calendar_html = helpers.generate_calendar_html(start_date, end_date, golden_dates, busy_dict, current_code)
             st.markdown(calendar_html, unsafe_allow_html=True)
             
             if busy_dict:
@@ -469,6 +182,8 @@ def render_view_results():
         with col1:
             if st.button("← 修改我的請假表", use_container_width=True):
                 st.session_state.page = "fill_form"
+                # 🌟 核心按鈕：在這裡按下時，將旗標開啟，指示填寫頁面重新向資料庫要資料
+                st.session_state.force_reload_form = True 
                 st.rerun()
         with col2:
             if st.button("🏠 回首頁 (離開活動)", use_container_width=True):
