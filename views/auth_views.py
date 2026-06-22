@@ -3,9 +3,6 @@ import pandas as pd
 from core import database as db
 from utils import helpers
 
-# ==========================================
-# 側邊欄 (新增接收 cookies 參數，並處理登出刪除 Cookie)
-# ==========================================
 def render_sidebar(cookies):
     with st.sidebar:
         st.markdown(f"### 👋 嗨，{st.session_state.display_name}")
@@ -78,7 +75,6 @@ def render_sidebar(cookies):
             st.session_state.username = ""
             st.session_state.display_name = ""
             
-            # 🌟 登出時，把瀏覽器裡的 Cookie 銷毀
             if "auto_login_user" in cookies:
                 del cookies["auto_login_user"]
                 cookies.save()
@@ -86,13 +82,15 @@ def render_sidebar(cookies):
             st.session_state.page = "login"
             st.rerun()
 
-# ==========================================
-# 畫面 0：登入與註冊門神 (新增接收 cookies 參數，並處理登入寫入 Cookie)
-# ==========================================
 def render_login(CLIENT_ID, REDIRECT_URI, cookies):
     st.title("🔐 歡迎來到揪團神器")
     if CLIENT_ID:
         auth_url = f"https://accounts.google.com/o/oauth2/v2/auth?client_id={CLIENT_ID}&redirect_uri={REDIRECT_URI}&response_type=code&scope=openid%20email%20profile"
+        
+        # 🌟 關鍵修復：將使用者點擊的「活動代碼」掛在 state 上面帶去給 Google
+        if st.session_state.current_event_code:
+            auth_url += f"&state={st.session_state.current_event_code}"
+            
         st.link_button("🌐 使用 Google 帳號一鍵登入", auth_url, type="primary", use_container_width=True)
         st.divider()
         st.markdown("<p style='text-align: center; color: gray; font-size: 14px;'>或者使用傳統帳號密碼</p>", unsafe_allow_html=True)
@@ -110,7 +108,6 @@ def render_login(CLIENT_ID, REDIRECT_URI, cookies):
                     st.session_state.username = login_user
                     st.session_state.display_name = user_data["顯示名稱"]
                     
-                    # 🌟 傳統登入成功後，將帳號寫入 Cookie
                     cookies["auto_login_user"] = login_user
                     cookies.save()
                     
