@@ -1,11 +1,24 @@
 import streamlit as st
 import pandas as pd
 from datetime import datetime, timedelta
+import requests  # 新增：用來跟 Google 溝通
 import database as db
 import utils
 
 # ==========================================
-# 狀態管理
+# 讀取 Google 金鑰
+# ==========================================
+try:
+    CLIENT_ID = st.secrets["GOOGLE_CLIENT_ID"]
+    CLIENT_SECRET = st.secrets["GOOGLE_CLIENT_SECRET"]
+    REDIRECT_URI = st.secrets["REDIRECT_URI"]
+except:
+    CLIENT_ID = ""
+    CLIENT_SECRET = ""
+    REDIRECT_URI = ""
+
+# ==========================================
+# 狀態管理與 Google 登入攔截
 # ==========================================
 if "page" not in st.session_state:
     st.session_state.page = "login"
@@ -18,9 +31,61 @@ if "username" not in st.session_state:
 if "display_name" not in st.session_state:
     st.session_state.display_name = ""
 
-if "code" in st.query_params and st.session_state.page == "home":
-    st.session_state.page = "fill_form"
-    st.session_state.current_event_code = st.query_params["code"]
+# 捕捉網址參數 (結合 Google Auth 與 揪團邀請碼)
+if "code" in st.query_params:
+    url_code = st.query_params["code"]
+    
+    if len(url_code) == 5:
+        # 1. 這是揪團邀請碼
+        st.session_state.current_event_code = url_code
+        if st.session_state.logged_in:
+            st.session_state.page = "fill_form"
+            
+    elif len(url_code) > 20 and not st.session_state.logged_in:
+        # 2. 這是 Google 登入回傳的驗證碼
+        token_url = "https://oauth2.googleapis.com/token"
+        data = {
+            "code": url_code,
+            "client_id": CLIENT_ID,
+            "client_secret": CLIENT_SECRET,
+            "redirect_uri": REDIRECT_URI,
+            "grant_type": "authorization_code"
+        }
+        res = requests.post(token_url, data=data)
+        if res.status_code == 200:
+            access_token = res.json().get("access_token")
+            # 拿 Token 去換取使用者的 Email 和名字
+            user_info_url = "https://www.googleapis.com/oauth2/v1/userinfo"
+            headers = {"Authorization": f"Bearer {access_token}"}
+            user_res = requests.get(user_info_url, headers=headers)
+            
+            if user_res.status_code == 200:
+                user_info = user_res.json()
+                user_email = user_info.get("email")
+                user_name = user_info.get("name")
+                
+                # 自動註冊或登入
+                users_df = db.load_users()
+                if user_email not in users_df["帳號"].values:
+                    # 第一次用 Google 登入，自動建立帳號
+                    db.register_user(user_email, utils.hash_password("google_oauth_dummy"), user_name)
+                
+                st.session_state.logged_in = True
+                st.session_state.username = user_email
+                st.session_state.display_name = user_name
+                
+                # 登入後判斷要去哪裡
+                if st.session_state.current_event_code:
+                    st.session_state.page = "fill_form"
+                else:
+                    st.session_state.page = "home"
+                
+                st.query_params.clear() # 把網址清乾淨
+                st.rerun()
+            else:
+                st.error("獲取 Google 帳號資料失敗！")
+        else:
+            st.error("Google 登入驗證過期，請重新點擊按鈕！")
 
 st.set_page_config(page_title="揪團時間表", page_icon="📅")
 
@@ -31,18 +96,14 @@ if st.session_state.logged_in:
     with st.sidebar:
         st.markdown(f"### 👋 嗨，{st.session_state.display_name}")
         st.caption(f"帳號：{st.session_state.username}")
-        
         st.divider()
         st.markdown("### 📂 我的揪團")
-        
         events_df = db.load_events()
         responses_df = db.load_responses()
         
         if not events_df.empty:
-            # 升級：改用 "主揪帳號" 核對身分
             created_events = events_df[events_df["主揪帳號"] == st.session_state.username]
             if not responses_df.empty:
-                # 升級：改用 "參與者帳號" 核對身分
                 joined_codes = responses_df[responses_df["參與者帳號"] == st.session_state.username]["活動代碼"].unique()
                 joined_events = events_df[events_df["活動代碼"].isin(joined_codes)]
                 joined_events = joined_events[~joined_events["活動代碼"].isin(created_events["活動代碼"])]
@@ -65,7 +126,6 @@ if st.session_state.logged_in:
                             st.rerun()
                     with col2:
                         if st.button("❌", key=f"c_lv_{code}", help="刪除我的請假表 (退出)"):
-                            # 退出時傳入自己的帳號
                             db.leave_event(code, st.session_state.username)
                             st.rerun()
                     with col3:
@@ -96,7 +156,7 @@ if st.session_state.logged_in:
                             st.rerun()
                             
         if created_events.empty and joined_events.empty:
-            st.info("目前還沒有紀錄喔！快去首頁建立吧。")
+            st.info("目前還沒有紀錄喔！")
 
         st.divider()
         if st.button("🚪 登出", use_container_width=True):
@@ -111,22 +171,32 @@ if st.session_state.logged_in:
 # ==========================================
 if not st.session_state.logged_in:
     st.title("🔐 歡迎來到揪團神器")
-    tab1, tab2 = st.tabs(["🔑 登入", "📝 註冊新帳號"])
+    
+    # --- 新增：Google 一鍵登入大按鈕 ---
+    if CLIENT_ID:
+        auth_url = f"https://accounts.google.com/o/oauth2/v2/auth?client_id={CLIENT_ID}&redirect_uri={REDIRECT_URI}&response_type=code&scope=openid%20email%20profile"
+        st.link_button("🌐 使用 Google 帳號一鍵登入", auth_url, type="primary", use_container_width=True)
+        st.divider()
+        st.markdown("<p style='text-align: center; color: gray; font-size: 14px;'>或者使用傳統帳號密碼</p>", unsafe_allow_html=True)
+        
+    tab1, tab2 = st.tabs(["🔑 傳統登入", "📝 註冊新帳號"])
     
     with tab1:
-        st.subheader("登入你的帳號")
         login_user = st.text_input("帳號", key="login_user")
         login_pass = st.text_input("密碼", type="password", key="login_pass")
-        if st.button("登入", type="primary"):
+        if st.button("登入"):
             users_df = db.load_users()
             if login_user in users_df["帳號"].values:
                 user_data = users_df[users_df["帳號"] == login_user].iloc[0]
                 if utils.verify_password(user_data["密碼雜湊"], login_pass):
-                    st.success("登入成功！")
                     st.session_state.logged_in = True
                     st.session_state.username = login_user
                     st.session_state.display_name = user_data["顯示名稱"]
-                    st.session_state.page = "home"
+                    
+                    if st.session_state.current_event_code:
+                        st.session_state.page = "fill_form"
+                    else:
+                        st.session_state.page = "home"
                     st.rerun()
                 else:
                     st.error("密碼錯誤，請再試一次！")
@@ -134,7 +204,6 @@ if not st.session_state.logged_in:
                 st.error("找不到這個帳號，請先註冊喔！")
 
     with tab2:
-        st.subheader("註冊新帳號")
         reg_user = st.text_input("設定帳號 (英文數字)", key="reg_user")
         reg_name = st.text_input("顯示暱稱 (大家會看到這個名字)", key="reg_name")
         reg_pass = st.text_input("設定密碼", type="password", key="reg_pass")
@@ -175,8 +244,6 @@ if st.session_state.page == "home":
 # ==========================================
 elif st.session_state.page == "create_event":
     st.title("👑 建立新揪團")
-    
-    # 升級：解鎖了暱稱欄位！可以自由更改，預設值是自己的名字
     organizer_name = st.text_input("你在本揪團的暱稱 (主揪)：", value=st.session_state.display_name)
     event_name = st.text_input("活動名稱：")
     date_range = st.date_input("預計出遊區間 (請選『開始』與『結束』日)：", value=[])
@@ -185,7 +252,6 @@ elif st.session_state.page == "create_event":
         if organizer_name and event_name and len(date_range) == 2:
             start_date, end_date = date_range
             new_code = utils.generate_event_code()
-            # 傳入自己的 st.session_state.username
             db.save_event(new_code, st.session_state.username, organizer_name, event_name, start_date, end_date)
             st.session_state.current_event_code = new_code
             st.session_state.page = "fill_form"
@@ -224,19 +290,20 @@ elif st.session_state.page == "fill_form":
     
     st.title(f"📝 填寫請假表：{event_info['活動名稱']}")
     st.caption(f"👑 主揪：{event_info['主揪']} | 🔑 活動代碼：`{current_code}`")
+    # 分享網址功能
+    share_url = f"{REDIRECT_URI}?code={current_code}"
+    st.info(f"🔗 **邀請朋友加入**：複製下方網址給朋友\n`{share_url}`")
     
     start_date = datetime.strptime(str(event_info['開始日期']), "%Y-%m-%d").date()
     end_date = datetime.strptime(str(event_info['結束日期']), "%Y-%m-%d").date()
     delta = end_date - start_date
     date_options = [(start_date + timedelta(days=i)).strftime("%Y-%m-%d") for i in range(delta.days + 1)]
 
-    # 升級：解鎖了暱稱欄位！可以自由更改，預設值是自己的名字
     participant_name = st.text_input("你在本揪團的暱稱：", value=st.session_state.display_name)
     selected_dates = st.multiselect(f"選擇你在這段期間「沒空」的日期：", date_options)
 
     if st.button("送出並查看結果", type="primary"):
         if participant_name:
-            # 傳入自己的 st.session_state.username
             db.save_response(current_code, st.session_state.username, participant_name, selected_dates)
             st.session_state.page = "view_results"
             st.rerun()
