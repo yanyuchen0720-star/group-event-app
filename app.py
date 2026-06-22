@@ -92,6 +92,34 @@ if "code" in st.query_params:
 st.set_page_config(page_title="揪團時間表", page_icon="📅")
 
 # ==========================================
+# 🌟 新增：針對手機版月曆的 CSS 強制修正
+# ==========================================
+st.markdown("""
+<style>
+/* 當螢幕寬度小於 640px (手機) 時觸發 */
+@media (max-width: 640px) {
+    /* 利用 :has 選擇器，"只"針對擁有 7 個子元素(即月曆的7天)的水平區塊強制不換行 */
+    div[data-testid="stHorizontalBlock"]:has(> div:nth-child(7)) {
+        flex-direction: row !important;
+        flex-wrap: nowrap !important;
+    }
+    
+    /* 縮小手機版按鈕的內邊距與字體，確保 7 個按鈕塞得進螢幕 */
+    div[data-testid="stHorizontalBlock"]:has(> div:nth-child(7)) button {
+        padding: 0.2rem 0rem !important;
+        font-size: 14px !important;
+        min-height: 2.5rem !important;
+    }
+    
+    /* 縮小上方星期幾 (一, 二, 三...) 的字體 */
+    div[data-testid="stHorizontalBlock"]:has(> div:nth-child(7)) div[data-testid="stMarkdownContainer"] p {
+        font-size: 13px !important;
+    }
+}
+</style>
+""", unsafe_allow_html=True)
+
+# ==========================================
 # 網頁路由 (Router)：分配工作給對應的模組
 # ==========================================
 if st.session_state.logged_in:
