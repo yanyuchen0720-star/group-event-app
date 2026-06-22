@@ -38,7 +38,7 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 # ==========================================
-# 🌟 Cookie 初始化
+# Cookie 初始化
 # ==========================================
 cookies = CookieManager()
 if not cookies.ready():
@@ -92,21 +92,26 @@ if not st.session_state.logged_in and cookies.get("auto_login_user"):
             st.session_state.page = "home"
 
 # ==========================================
-# 🌟 網址參數捕捉 (修正無限迴圈與卡死陷阱)
+# 🌟 網址參數捕捉 (修正「跳回首頁卡死」的失憶症)
 # ==========================================
+# 🌟 先把從 Google OAuth 帶回來的 state (活動代碼) 撿回來
+if "state" in st.query_params:
+    st.session_state.current_event_code = st.query_params["state"]
+
 if "code" in st.query_params:
     url_code = st.query_params["code"]
     
     # 情況 A：收到 5 碼的邀請碼
     if len(url_code) == 5:
         st.session_state.current_event_code = url_code
-        st.query_params.clear()  # 🌟 破除陷阱：一抓到代碼，立刻把網址清乾淨！
         
+        # 🌟 關鍵防呆：確認「已經登入成功」，才把網址的 code 清空並跳轉！
         if st.session_state.logged_in:
+            st.query_params.clear()
             st.session_state.page = "fill_form"
-            st.rerun()  # 已經登入就直接跳轉
+            st.rerun() 
             
-    # 情況 B：收到 Google 驗證碼
+    # 情況 B：收到 Google 驗證碼 (跳轉回來)
     elif len(url_code) > 20 and not st.session_state.logged_in:
         token_url = "https://oauth2.googleapis.com/token"
         data = {
@@ -139,8 +144,9 @@ if "code" in st.query_params:
                 cookies["auto_login_user"] = user_email
                 cookies.save()
                 
-                st.query_params.clear() # Google 驗證碼也要清掉
+                st.query_params.clear() 
                 
+                # 🌟 因為前面攔截了 state，這裡就不會是空的，能順利跳到請假表了！
                 if st.session_state.current_event_code:
                     st.session_state.page = "fill_form"
                 else:
