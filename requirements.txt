@@ -2,3 +2,4 @@ streamlit
 pandas
 requests
 streamlit-cookies-manager
+supabase
