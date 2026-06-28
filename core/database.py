@@ -1,88 +1,117 @@
+import streamlit as st
 import pandas as pd
-import os
+from supabase import create_client, Client
 
-EVENTS_FILE = "events_data.csv"
-RESPONSES_FILE = "responses_data.csv"
-USERS_FILE = "users_data.csv"
+# ==========================================
+# 🌟 初始化 Supabase 雲端客戶端
+# ==========================================
+url: str = st.secrets["SUPABASE_URL"]
+key: str = st.secrets["SUPABASE_KEY"]
+supabase: Client = create_client(url, key)
 
+# ==========================================
+# 1. 活動相關操作 (Events)
+# ==========================================
 def load_events():
-    if not os.path.exists(EVENTS_FILE):
-        # 升級：多加一欄「主揪帳號」
+    res = supabase.table("events").select("*").execute()
+    # 如果雲端沒資料，回傳空的 DataFrame 並帶有預期中文欄位，防止 UI 報錯
+    if not res.data:
         return pd.DataFrame(columns=["活動代碼", "主揪帳號", "主揪", "活動名稱", "開始日期", "結束日期"])
-    return pd.read_csv(EVENTS_FILE)
-
-def load_responses():
-    if not os.path.exists(RESPONSES_FILE):
-        # 升級：多加一欄「參與者帳號」
-        return pd.DataFrame(columns=["活動代碼", "參與者帳號", "姓名", "沒空日期"])
-    return pd.read_csv(RESPONSES_FILE)
-
-# 升級：存檔時，一併把 user_account (帳號) 存進去
-def save_event(new_code, user_account, organizer_name, event_name, start_date, end_date):
-    events_df = load_events()
-    new_event = pd.DataFrame({
-        "活動代碼": [new_code],
-        "主揪帳號": [user_account],
-        "主揪": [organizer_name],
-        "活動名稱": [event_name],
-        "開始日期": [start_date],
-        "結束日期": [end_date]
-    })
-    events_df = pd.concat([events_df, new_event], ignore_index=True)
-    events_df.to_csv(EVENTS_FILE, index=False)
-
-# 升級：存檔時，一併把 user_account 存進去
-def save_response(current_code, user_account, participant_name, selected_dates):
-    responses_df = load_responses()
-    if len(selected_dates) > 0:
-        new_data = pd.DataFrame({
-            "活動代碼": [current_code] * len(selected_dates),
-            "參與者帳號": [user_account] * len(selected_dates),
-            "姓名": [participant_name] * len(selected_dates),
-            "沒空日期": selected_dates
-        })
-    else:
-        new_data = pd.DataFrame({
-            "活動代碼": [current_code],
-            "參與者帳號": [user_account],
-            "姓名": [participant_name],
-            "沒空日期": ["完全有空"]
-        })
     
-    # 清除舊紀錄時，認「帳號」而不是認名字
-    responses_df = responses_df[~((responses_df["活動代碼"] == current_code) & (responses_df["參與者帳號"] == user_account))]
-    responses_df = pd.concat([responses_df, new_data], ignore_index=True)
-    responses_df.to_csv(RESPONSES_FILE, index=False)
+    # 讀取雲端資料並將英文欄位名完美對應回原本的中文 DataFrame 結構
+    df = pd.DataFrame(res.data)
+    df = df.rename(columns={
+        "event_code": "活動代碼",
+        "creator_account": "主揪帳號",
+        "creator_name": "主揪",
+        "event_name": "活動名稱",
+        "start_date": "開始日期",
+        "end_date": "結束日期"
+    })
+    return df
+
+def save_event(new_code, user_account, organizer_name, event_name, start_date, end_date):
+    supabase.table("events").insert({
+        "event_code": new_code,
+        "creator_account": user_account,
+        "creator_name": organizer_name,
+        "event_name": event_name,
+        "start_date": str(start_date),
+        "end_date": str(end_date)
+    }).execute()
 
 def delete_event(current_code):
-    events_df = load_events()
-    events_df = events_df[events_df["活動代碼"] != current_code]
-    events_df.to_csv(EVENTS_FILE, index=False)
+    # 連鎖刪除：刪除活動本身，同時刪除該活動的所有請假回應
+    supabase.table("events").delete().eq("event_code", current_code).execute()
+    supabase.table("responses").delete().eq("event_code", current_code).execute()
+
+# ==========================================
+# 2. 回應相關操作 (Responses)
+# ==========================================
+def load_responses():
+    res = supabase.table("responses").select("*").execute()
+    if not res.data:
+        return pd.DataFrame(columns=["活動代碼", "參與者帳號", "姓名", "沒空日期"])
     
-    responses_df = load_responses()
-    responses_df = responses_df[responses_df["活動代碼"] != current_code]
-    responses_df.to_csv(RESPONSES_FILE, index=False)
+    df = pd.DataFrame(res.data)
+    df = df.rename(columns={
+        "event_code": "活動代碼",
+        "user_account": "參與者帳號",
+        "user_name": "姓名",
+        "busy_date": "沒空日期"
+    })
+    return df
 
-# 升級：退出活動時，用「帳號」來確認身分，確保不會刪到同名同姓的人
+def save_response(current_code, user_account, user_name, selected_dates):
+    # 先清除該使用者在這個活動的舊請假紀錄
+    supabase.table("responses").delete().eq("event_code", current_code).eq("user_account", user_account).execute()
+    
+    # 寫入新紀錄
+    if not selected_dates:
+        # 如果完全沒有勾選沒空日期，寫入一筆「完全有空」
+        supabase.table("responses").insert({
+            "event_code": current_code,
+            "user_account": user_account,
+            "user_name": user_name,
+            "busy_date": "完全有空"
+        }).execute()
+    else:
+        # 多筆日期一次打包整批寫入 (Bulk Insert)
+        rows = [{
+            "event_code": current_code,
+            "user_account": user_account,
+            "user_name": user_name,
+            "busy_date": d
+        } for d in selected_dates]
+        supabase.table("responses").insert(rows).execute()
+
 def leave_event(current_code, user_account):
-    responses_df = load_responses()
-    responses_df = responses_df[~((responses_df["活動代碼"] == current_code) & (responses_df["參與者帳號"] == user_account))]
-    responses_df.to_csv(RESPONSES_FILE, index=False)
+    supabase.table("responses").delete().eq("event_code", current_code).eq("user_account", user_account).execute()
 
+# ==========================================
+# 3. 會員相關操作 (Users)
+# ==========================================
 def load_users():
-    if not os.path.exists(USERS_FILE):
+    res = supabase.table("users").select("*").execute()
+    if not res.data:
         return pd.DataFrame(columns=["帳號", "密碼雜湊", "顯示名稱"])
-    return pd.read_csv(USERS_FILE)
+    
+    df = pd.DataFrame(res.data)
+    df = df.rename(columns={
+        "username": "帳號",
+        "password_hash": "密碼雜湊",
+        "display_name": "顯示名稱"
+    })
+    return df
 
 def register_user(username, password_hash, display_name):
-    users_df = load_users()
-    if username in users_df["帳號"].values:
+    try:
+        supabase.table("users").insert({
+            "username": username,
+            "password_hash": password_hash,
+            "display_name": display_name
+        }).execute()
+        return True
+    except Exception as e:
+        # 如果帳號重複(Primary Key 衝突)，Supabase 會拋出異常，此時回傳註冊失敗
         return False
-    new_user = pd.DataFrame({
-        "帳號": [username],
-        "密碼雜湊": [password_hash],
-        "顯示名稱": [display_name]
-    })
-    users_df = pd.concat([users_df, new_user], ignore_index=True)
-    users_df.to_csv(USERS_FILE, index=False)
-    return True
